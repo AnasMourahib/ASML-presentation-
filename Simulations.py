@@ -1,212 +1,205 @@
 # -*- coding: utf-8 -*-
 """
-Created on Sun Sep 28 15:46:40 2025
+temperature_extreme_value_analysis.py
 
-@author: 20254817
+Extreme value analysis of temperature time series data.
+
+This script:
+1. Loads historical temperature data from an RDS file.
+2. Identifies annual maxima.
+3. Fits and visualizes:
+   - Gumbel distribution
+   - Generalized Extreme Value (GEV) distribution
+   - Generalized Pareto (GPD) distribution
+
+Author: Anas Mourahib
+Date: 2025-09-28
 """
 
-import pandas as pd 
-import numpy as np 
+import math
+import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
-import math 
 from sklearn.linear_model import LinearRegression
-
-
-
-
-months =["Jan" , "Feb" , "Mar" , "Apr" , "May" , "Jun" , 
-         "Jul" , "Aug" , "Sep" , "Oct" , "Nov" , "Dec"]
-
-Temperatures = np.random.normal(loc = 22 , scale = 1 , size = 24 * 30 * 12)
-Temperatures_matrix = Temperatures.reshape(720  , 12)
-
-df = pd.DataFrame( Temperatures_matrix , columns = months )
-
-##Plot the whole time series
-
-plt.plot(Temperatures)
-plt.title("Hourly Temperature Time Series (Jan–Dec) of an ASML Component")
-plt.xlabel("Hour index")
-plt.ylabel("Temperature")
-plt.show()
-
-
-
-#### Divide the time series into months and then plot 
-
-axes = df.plot(subplots=True, layout=(4,3), figsize=(12,10), sharex=True, color = 'black')
-plt.suptitle("Hourly temperature time series of an ASML component divided by months with maximum temperature each month in red", y=1.02)
-axes = axes.flatten()
-
-for i,m in enumerate(df.columns):
-    idx_max = df[m].idxmax()
-    val_max = df[m].max()
-    axes[i].plot(idx_max , val_max , 'ro')
-
-plt.show()
-
-
-
-##Define the maximum for each month
-
-max_per_month = Temperatures_matrix.max(axis= 0)
-
-
-
-###########
+from scipy.stats import genextreme as gev
+from scipy.stats import genpareto as gpd
 import pyreadr
 
-# Load the RDS file
-result = pyreadr.read_r("C:/Users/20254817/Desktop/Githib/Simulations/st1.rds")
 
-df = list(result.values())[0]  # extract the DataFrame
-print(df.head())
+# -------------------------------------------------------------------------
+# Load and process temperature data from RDS file
+# -------------------------------------------------------------------------
 
-Temp = []
-for t in df.values:
-    Temp.append(t[0])
-
-years = np.arange(1850 , 2020 , step = 20)
-
-plt.plot(Temp)
-plt.title("Daily temperature time series (1850-2020) ")
-plt.xlabel("Time index")
-plt.xticks(np.linspace(0, len(Temp)-1, len(years)) , labels = years)
-plt.ylabel("Temperature")
-plt.show()
+def load_rds_data(path: str) -> pd.DataFrame:
+    """Load temperature data from an RDS file."""
+    result = pyreadr.read_r(path)
+    return list(result.values())[0]
 
 
-Temp = np.array(Temp)
-
-blocks = np.arange(0 , 171)
-max_per_year_ind = []
-for block in blocks:
-    print(block)
-    index = np.arange(block * 92 , ((block+1) * 92)  )
-    val_per_year = Temp[ index  ]
-    idx = np.where(val_per_year == val_per_year.max())[0][0]  
-    max_per_year_ind.append(block * 92 + idx)
+def extract_temperature_series(df: pd.DataFrame) -> np.ndarray:
+    """Extract temperature series from DataFrame loaded via pyreadr."""
+    return np.array([t[0] for t in df.values])
 
 
-plt.plot(Temp, color="blue")
-plt.scatter(max_per_year_ind , Temp[max_per_year_ind], color='red')
-plt.title("In red, the maximum temperature of each year")
-plt.xlabel("Years")
-plt.xticks(np.linspace(0, len(Temp)-1, len(years)) , labels = years)
-plt.ylabel("Temperature")
-plt.show()
+# -------------------------------------------------------------------------
+# Extreme value analysis
+# -------------------------------------------------------------------------
+
+def find_annual_maxima(temp: np.ndarray, block_size: int = 92) -> list[int]:
+    """Identify indices of annual maxima in a time series."""
+    n_blocks = len(temp) // block_size
+    max_indices = []
+    for b in range(n_blocks):
+        idx_range = np.arange(b * block_size, (b + 1) * block_size)
+        val_block = temp[idx_range]
+        idx = np.argmax(val_block)
+        max_indices.append(b * block_size + idx)
+    return max_indices
 
 
+def plot_annual_maxima(temp: np.ndarray, max_indices: list[int], years: np.ndarray):
+    """Plot time series with annual maxima highlighted."""
+    plt.figure()
+    plt.plot(temp, color="blue", label="Temperature")
+    plt.scatter(max_indices, temp[max_indices], color="red", label="Annual maxima")
+    plt.title("Annual Maxima in Temperature Series")
+    plt.xlabel("Years")
+    plt.ylabel("Temperature")
+    plt.xticks(
+        np.linspace(0, len(temp) - 1, len(years)),
+        labels=years,
+        rotation=45
+    )
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
 
 
-### Histogram of Annual maxima temperature 
-
-plt.hist(Temp[max_per_year_ind])
-plt.title("Histogram of annual maxima")
-plt.xlabel("Annual maxima")
-plt.show() 
-
-#### Part 1 : Fitting a Gumbel distribution 
-   ####Part 1.1 QQ plot for a standard Gumbel distribution, meaning location = 0 and scale = 1
-n_years = len(Temp)/92
-
-def Gumbel_quantile_fun(p) :
-    x = -math.log(-math.log(p))
-    return(x)
-
-emp_quantile  = np.sort(Temp[max_per_year_ind])
-Gumbel_quantile_standard =[]
-for  i in np.arange(1, n_years+1):
-    val = Gumbel_quantile_fun(i/(n_years+1))
-    Gumbel_quantile_standard.append(val)
-
-plt.plot(Gumbel_quantile_standard , emp_quantile)
-plt.title("Q-Q plot")
-plt.xlabel("Standard Gumbel quantiles")
-plt.ylabel("Annual maxima")
-plt.plot([min(Gumbel_quantile_standard), max(Gumbel_quantile_standard)], [min(Gumbel_quantile_standard), max(Gumbel_quantile_standard)], color='red')  # x = y line
+def plot_histogram(data: np.ndarray, title: str = "Histogram of Annual Maxima"):
+    """Plot a histogram of annual maximum temperatures."""
+    plt.figure()
+    plt.hist(data, color="lightgray", edgecolor="black")
+    plt.title(title)
+    plt.xlabel("Annual maxima")
+    plt.ylabel("Frequency")
+    plt.tight_layout()
+    plt.show()
 
 
-   ###Part 1.2 regress Gumbel quantiles on Empirical quantiles to estimate the shape and location parameters
+# -------------------------------------------------------------------------
+# Gumbel Distribution Fitting
+# -------------------------------------------------------------------------
 
-Gumbel_quantile_standard = np.array(Gumbel_quantile_standard)
-
-
-model = LinearRegression()
-
-y = emp_quantile
-x =  np.array(Gumbel_quantile_standard).reshape((-1 , 1))
-lm = LinearRegression().fit(x, y)
-
-slope = lm.coef_ ### This is the scale parameter
-intercept = lm.intercept_ ### This is the location parameter 
+def gumbel_quantile(p: float) -> float:
+    """Quantile function of the standard Gumbel distribution."""
+    return -math.log(-math.log(p))
 
 
-Gumbel_quantile = (Gumbel_quantile_standard * slope) + intercept
+def fit_gumbel(empirical: np.ndarray) -> tuple[np.ndarray, float, float]:
+    """Fit a Gumbel distribution via linear regression (QQ plot method)."""
+    n = len(empirical)
+    probs = np.arange(1, n + 1) / (n + 1)
+    gumbel_q = np.array([gumbel_quantile(p) for p in probs])
+    model = LinearRegression().fit(gumbel_q.reshape(-1, 1), empirical)
+    scale, loc = model.coef_[0], model.intercept_
+    return gumbel_q, scale, loc
 
-plt.plot(Gumbel_quantile , emp_quantile)
-plt.title("Q-Q plot")
-plt.xlabel("Gumbel quantiles")
-plt.ylabel("Annual maxima")
-plt.plot([min(Gumbel_quantile), max(Gumbel_quantile)], [min(Gumbel_quantile), max(Gumbel_quantile)], color='red')  # x = y line
+
+def plot_qq(empirical: np.ndarray, theoretical: np.ndarray, title: str):
+    """Generic Q-Q plot."""
+    plt.figure()
+    plt.scatter(theoretical, empirical, color="navy")
+    plt.plot(
+        [min(theoretical), max(theoretical)],
+        [min(theoretical), max(theoretical)],
+        color="red", linestyle="--"
+    )
+    plt.title(title)
+    plt.xlabel("Theoretical quantiles")
+    plt.ylabel("Empirical quantiles")
+    plt.tight_layout()
+    plt.show()
 
 
+# -------------------------------------------------------------------------
+# Generalized Extreme Value (GEV) Distribution
+# -------------------------------------------------------------------------
 
-##### Part 2 : Fitting a generalized extreme value distribution  
-
-from scipy.stats import genextreme as gev
-
-###
-
-def main(rvs):
-    shape , loc , scale = gev.fit(rvs)
-    return - shape , loc , scale
-
-shape, loc, scale = main(Temp[max_per_year_ind])
+def fit_gev(rvs: np.ndarray) -> tuple[float, float, float]:
+    """Fit a GEV distribution and return parameters."""
+    shape, loc, scale = gev.fit(rvs)
+    return -shape, loc, scale  # Negate for consistent convention
 
 
 
-###### QQ plot 
-
-def quantile_gev_fun(x, loc, scale, shape):
-    quantile = loc + (scale / shape) * ( ( (-math.log(x)) ** (-shape) ) - 1)
-    return quantile
+# -------------------------------------------------------------------------
+# Generalized Pareto (GPD) Distribution
+# -------------------------------------------------------------------------
 
 
+def fit_gpd(rvs: np.ndarray) -> tuple[float, float, float]:
+    """Fit a GEV distribution and return parameters."""
+    shape, loc, scale = gpd.fit(rvs)
+    return shape, loc, scale  # Negate for consistent convention
 
-Gev_quantile =[]
-for  i in np.arange(1, n_years+1):
-    val = quantile_gev_fun( i/(n_years+1) ,  loc  = loc , scale = scale , shape = shape)
-    Gev_quantile.append(val)
+# -------------------------------------------------------------------------
+# Generalized Pareto Distribution (GPD)
+# -------------------------------------------------------------------------
+
+def find_exceedances(temp: np.ndarray, quantile: float = 0.95) -> tuple[float, np.ndarray]:
+    """Return exceedances above a given quantile threshold."""
+    threshold = np.quantile(temp, q=quantile)
+    exceedances = temp[temp > threshold]
+    return threshold, exceedances
+
+
+def plot_exceedances(temp: np.ndarray, threshold: float, exceedances: np.ndarray):
+    """Plot time series with exceedances highlighted."""
+    plt.figure()
+    plt.plot(temp, color="steelblue")
+    plt.scatter(np.where(temp > threshold), exceedances, color="red", label="Exceedances")
+    plt.axhline(y=threshold, color="black", linestyle="--", label="Threshold")
+    plt.title("Exceedances above 0.95 Quantile")
+    plt.xlabel("Time index")
+    plt.ylabel("Temperature")
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+
+# -------------------------------------------------------------------------
+# Main execution
+# -------------------------------------------------------------------------
+
+def main():
+    """Run the full extreme value analysis pipeline."""
+    # Load and extract temperature data
+    rds_path = "C:/Users/20254817/Desktop/Githib/Simulations/st1.rds"
+    rds_df = load_rds_data(rds_path)
+    temp_series = extract_temperature_series(rds_df)
+
+    # Compute and visualize annual maxima
+    years = np.arange(1850, 2020, step=20)
+    max_indices = find_annual_maxima(temp_series)
+    plot_annual_maxima(temp_series, max_indices, years)
+    plot_histogram(temp_series[max_indices])
+
+    # Fit and visualize Gumbel distribution
+    gumbel_q, scale, loc = fit_gumbel(np.sort(temp_series[max_indices]))
+    plot_qq(np.sort(temp_series[max_indices]), gumbel_q,
+            "Q-Q Plot: Empirical vs. Standard Gumbel")
+
+    # Fit and display GEV distribution parameters
+    shape, loc, scale = fit_gev(temp_series[max_indices])
+    print(f"GEV parameters: shape={shape:.3f}, loc={loc:.3f}, scale={scale:.3f}")
+
+    # Identify and plot exceedances (GPD step)
+    threshold, exceedances = find_exceedances(temp_series)
+    plot_exceedances(temp_series, threshold, exceedances)
+    stand_exceedances = exceedances - threshold
     
+    shape, loc, scale = fit_gpd(stand_exceedances)
+    print(f"GPD parameters: shape={shape:.3f}, loc={loc:.3f}, scale={scale:.3f}")
 
-plt.plot(Gev_quantile , emp_quantile)
-plt.title("Q-Q plot")
-plt.xlabel("Generalized extreme value distribution quantiles")
-plt.ylabel("Annual maxima")
-plt.plot([min(Gev_quantile), max(Gev_quantile)], [min(Gev_quantile), max(Gev_quantile)], color='red')  # x = y line
-
-
-
-
-#### Part 3 : Fitting a Generalized Pareto distribution
-
-threshold = np.quantile(Temp, q= 0.95)
-
-exceedances = []
-
-for value in Temp:
-    if value > threshold:
-        exceedances.append(value)
-        
-        
-exceedances = np.array(exceedances)     
-
-
-plt.plot(Temp, color='blue')
-plt.scatter(np.where(Temp > threshold), exceedances, color='red')
-plt.title("Exceedances of the 0.95 quantile in red")
-plt.xlabel("Years")
-plt.ylabel("Temperature")
-plt.axhline(y=threshold, color='black', linestyle='--')
-plt.show()
+if __name__ == "__main__":
+    main()
